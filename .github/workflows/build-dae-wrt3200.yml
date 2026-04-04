@@ -11,7 +11,18 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Install Build Dependencies (BPF Toolchain)
+    - name: Free Disk Space
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: false
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: true
+        swap-storage: true
+
+    - name: Install Build Dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
@@ -21,6 +32,12 @@ jobs:
     - name: Clone Official OpenWrt v24.10.6
       run: |
         git clone -b v24.10.6 --single-branch https://git.openwrt.org/openwrt/openwrt.git openwrt
+
+    - name: Update and Install Feeds
+      working-directory: ./openwrt
+      run: |
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
 
     - name: Generate Strict Kernel Configuration
       working-directory: ./openwrt
@@ -70,7 +87,7 @@ jobs:
         CONFIG_KERNEL_BPF_STREAM_PARSER=y
 
         # ==========================================
-        # 7. 网络流量控制与调度 (官方要求的 m 统一转为 y)
+        # 7. 网络流量控制与调度
         # ==========================================
         CONFIG_KERNEL_NET_INGRESS=y
         CONFIG_KERNEL_NET_EGRESS=y
@@ -79,9 +96,24 @@ jobs:
         CONFIG_KERNEL_NET_CLS_ACT=y
 
         # ==========================================
-        # 8. 确保剥离 LuCI，保持绝对纯净
+        # 8. LuCI 管理界面与本地化
         # ==========================================
-        # CONFIG_PACKAGE_luci is not set
+        CONFIG_PACKAGE_luci=y
+        CONFIG_PACKAGE_luci-ssl=y
+        CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
+
+        # ==========================================
+        # 9. USB 与 Ext4 存储支持
+        # ==========================================
+        CONFIG_PACKAGE_kmod-usb-core=y
+        CONFIG_PACKAGE_kmod-usb2=y
+        CONFIG_PACKAGE_kmod-usb3=y
+        CONFIG_PACKAGE_kmod-usb-storage=y
+        CONFIG_PACKAGE_kmod-usb-storage-uas=y
+        CONFIG_PACKAGE_kmod-scsi-core=y
+        CONFIG_PACKAGE_kmod-fs-ext4=y
+        CONFIG_PACKAGE_block-mount=y
+        CONFIG_PACKAGE_e2fsprogs=y
         EOF
         
         make defconfig
@@ -90,11 +122,23 @@ jobs:
       working-directory: ./openwrt
       run: make download -j8
 
+    - name: Inject Official Vermagic (Enable Official kmod Support)
+      working-directory: ./openwrt
+      run: |
+        echo "Fetching official manifest for WRT3200ACM v24.10.6..."
+        OFFICIAL_MANIFEST="https://downloads.openwrt.org/releases/24.10.6/targets/mvebu/cortexa9/openwrt-24.10.6-mvebu-cortexa9.manifest"
+        
+        # 提取官方的 vermagic
+        curl -s $OFFICIAL_MANIFEST | grep "^kernel " | awk '{print $3}' | awk -F'-' '{print $NF}' > .vermagic
+        echo "Official Vermagic extracted: $(cat .vermagic)"
+        
+        # 强行替换内核编译脚本中的 vermagic 生成逻辑，使用我们刚刚下载的官方哈希值
+        sed -i 's/grep.*md5 > $(LINUX_DIR)\/.vermagic/cp $(TOPDIR)\/.vermagic $(LINUX_DIR)\/.vermagic/g' include/kernel-defaults.mk
+
     - name: Compile Firmware
       working-directory: ./openwrt
       run: make -j$(nproc) V=s
 
-    # 【这里的提取路径已修改，同时提取 factory 和 sysupgrade 包】
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
