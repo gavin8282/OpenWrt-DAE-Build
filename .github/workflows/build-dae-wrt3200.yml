@@ -14,18 +14,27 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    # 释放磁盘空间（全量固件编译必须，否则磁盘会满）
-    - name: Maximize Build Space
-      uses: easimon/maximize-build-space@master
-      with:
-        swap-size-mb: 1024
-        remove-dotnet: 'true'
-        remove-android: 'true'
-        remove-haskell: 'true'
-        remove-codeql: 'true'
-        remove-docker-images: 'true'
+    - name: Checkout Code
+      uses: actions/checkout@v4
 
-    # 安装你提供的超级全量依赖，并在末尾追加了编译 DAED 面板必需的 npm
+    # 终极激进清理：干掉所有不需要的预装大件，腾出至少 30GB+ 的绝对干净空间
+    - name: Free Disk Space (Ultimate)
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /usr/local/share/boost
+        sudo rm -rf /usr/share/swift
+        sudo rm -rf /usr/local/share/powershell
+        sudo rm -rf /usr/share/logstash
+        sudo rm -rf /etc/mysql
+        sudo rm -rf /etc/php
+        sudo rm -rf /opt/hostedtoolcache
+        sudo docker image prune --all --force
+        sudo apt-get clean
+        df -h
+
+    # 此时根目录空间已处于最完美状态，开始安装全量依赖
     - name: Install Build Dependencies
       run: |
         sudo apt-get update
@@ -38,7 +47,7 @@ jobs:
           python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs \
           upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd npm
         
-        # 全局安装 pnpm (DAED 专属前端构建工具)
+        # 重新全局安装 pnpm
         sudo npm install -g pnpm
 
     - name: Clone OpenWrt Source
@@ -56,21 +65,20 @@ jobs:
     - name: Modify Default IP Address
       run: |
         cd openwrt
-        # 将默认 IP 修改为 172.16.18.254
         sed -i 's/192.168.1.1/172.16.18.254/g' package/base-files/files/bin/config_generate
 
     - name: Configure Kernel & Packages
       run: |
         cd openwrt
         
-        # 1. 目标平台配置 (WRT3200ACM)
+        # Target System
         cat >> .config <<EOF
         CONFIG_TARGET_mvebu=y
         CONFIG_TARGET_mvebu_cortexa9=y
         CONFIG_TARGET_mvebu_cortexa9_DEVICE_linksys_wrt3200acm=y
         EOF
         
-        # 2. 补全 DAE 官方及博客推荐的所有 eBPF / BTF / TC 高级内核参数
+        # Kernel eBPF / BTF Options
         cat >> .config <<EOF
         CONFIG_DEVEL=y
         CONFIG_BPF_TOOLCHAIN_HOST=y
@@ -91,7 +99,7 @@ jobs:
         CONFIG_KERNEL_DEBUG_FS=y
         EOF
         
-        # 3. 默认集成带有中文语言包的 LuCI 界面
+        # LuCI with Chinese language pack
         cat >> .config <<EOF
         CONFIG_PACKAGE_luci=y
         CONFIG_PACKAGE_luci-base=y
@@ -100,7 +108,7 @@ jobs:
         CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
         EOF
         
-        # 4. 只编译 DAED 插件为模块 (生成独立 ipk 供后续手动安装)
+        # Compile DAED as a module (M)
         echo "CONFIG_PACKAGE_luci-app-daed=m" >> .config
         
         make defconfig
