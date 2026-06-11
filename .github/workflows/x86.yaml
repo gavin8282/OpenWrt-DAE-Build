@@ -1,4 +1,4 @@
-name: x64 for PVE (Pure eBPF & BBR - High Performance)
+name: x64 (Pure eBPF & BBR - High Performance)
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
       openwrt_version:
         description: 'OpenWrt 官方源码标签/分支'
         required: true
-        default: 'v25.12.4'
+        default: 'v24.10.7'
 
 jobs:
   build:
