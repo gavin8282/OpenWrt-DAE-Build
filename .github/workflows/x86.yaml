@@ -1,4 +1,4 @@
-name: Build OpenWrt x64 for PVE (Pure eBPF & BBR - High Performance)
+name: x64 for PVE (Pure eBPF & BBR - High Performance)
 
 on:
   workflow_dispatch:
