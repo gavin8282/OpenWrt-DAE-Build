@@ -1,4 +1,4 @@
-name: Build OpenWrt (eBPF) & DAED for WRT3200ACM
+name: Build OpenWrt x64 for PVE (Pure eBPF & BBR)
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
       openwrt_version:
         description: 'OpenWrt 官方源码标签/分支'
         required: true
-        default: 'v24.10.6'
+        default: 'v25.12.4'
 
 jobs:
   build:
@@ -34,7 +34,7 @@ jobs:
         sudo apt-get clean
         df -h
 
-    # 此时根目录空间已处于最完美状态，开始安装全量依赖
+    # 安装全量编译依赖
     - name: Install Build Dependencies
       run: |
         sudo apt-get update
@@ -57,11 +57,6 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Clone DAED Source (kix branch)
-      run: |
-        cd openwrt/package
-        git clone -b kix https://github.com/QiuSimons/luci-app-daed
-
     - name: Modify Default IP Address
       run: |
         cd openwrt
@@ -71,35 +66,59 @@ jobs:
       run: |
         cd openwrt
         
-        # Target System
+        # Target System 修改为 x86_64 通用架构
         cat >> .config <<EOF
-        CONFIG_TARGET_mvebu=y
-        CONFIG_TARGET_mvebu_cortexa9=y
-        CONFIG_TARGET_mvebu_cortexa9_DEVICE_linksys_wrt3200acm=y
+        CONFIG_TARGET_x86=y
+        CONFIG_TARGET_x86_64=y
+        CONFIG_TARGET_x86_64_DEVICE_generic=y
         EOF
         
-        # Kernel eBPF / BTF Options
+        # 默认开启 TCP BBR 加速
+        cat >> .config <<EOF
+        CONFIG_KERNEL_TCP_CONG_BBR=y
+        CONFIG_KERNEL_DEFAULT_TCP_CONG="bbr"
+        EOF
+        
+        # 指定的内核 eBPF / BTF 支持清单
         cat >> .config <<EOF
         CONFIG_DEVEL=y
         CONFIG_BPF_TOOLCHAIN_HOST=y
-        CONFIG_KERNEL_BPF_EVENTS=y
-        CONFIG_KERNEL_CGROUP_BPF=y
-        CONFIG_KERNEL_DEBUG_INFO=y
-        CONFIG_KERNEL_DEBUG_INFO_BTF=y
-        CONFIG_KERNEL_DEBUG_INFO_REDUCED=n
-        CONFIG_KERNEL_XDP_SOCKETS=y
-        CONFIG_PACKAGE_kmod-xdp-sockets-diag=y
-        CONFIG_KERNEL_KALLSYMS=y
-        CONFIG_KERNEL_KPROBES=y
-        CONFIG_KERNEL_KPROBE_EVENTS=y
-        CONFIG_KERNEL_BPF_STREAM_PARSER=y
-        CONFIG_KERNEL_NET_CLS_BPF=y
-        CONFIG_KERNEL_NET_ACT_BPF=y
+        CONFIG_KERNEL_BPF=y
         CONFIG_KERNEL_BPF_SYSCALL=y
-        CONFIG_KERNEL_DEBUG_FS=y
+        CONFIG_KERNEL_BPF_JIT=y
+        CONFIG_KERNEL_CGROUPS=y
+        CONFIG_KERNEL_KPROBES=y
+        CONFIG_KERNEL_NET_INGRESS=y
+        CONFIG_KERNEL_NET_EGRESS=y
+        CONFIG_PACKAGE_kmod-net-sch-ingress=m
+        CONFIG_PACKAGE_kmod-net-cls-bpf=m
+        CONFIG_KERNEL_NET_CLS_ACT=y
+        CONFIG_KERNEL_BPF_STREAM_PARSER=y
+        CONFIG_KERNEL_DEBUG_INFO=y
+        CONFIG_KERNEL_DEBUG_INFO_REDUCED=n
+        CONFIG_KERNEL_DEBUG_INFO_BTF=y
+        CONFIG_KERNEL_KPROBE_EVENTS=y
+        CONFIG_KERNEL_BPF_EVENTS=y
         EOF
         
-        # LuCI with Chinese language pack
+        # 高性能网络诊断、容器网络、高级流量调度包（全部直接内建编译 =y）
+        cat >> .config <<EOF
+        CONFIG_PACKAGE_kmod-xdp-sockets-diag=y
+        CONFIG_PACKAGE_kmod-veth=y
+        CONFIG_PACKAGE_kmod-sched-core=y
+        CONFIG_PACKAGE_kmod-sched-bpf=y
+        CONFIG_PACKAGE_kmod-sched=y
+        CONFIG_PACKAGE_kmod-cls-bpf=y
+        CONFIG_PACKAGE_kmod-nft-bridge=y
+        CONFIG_PACKAGE_tc-full=y
+        EOF
+        
+        # PVE 虚拟机专属优化组件
+        cat >> .config <<EOF
+        CONFIG_PACKAGE_qemu-ga=y
+        EOF
+        
+        # LuCI 基础组件及中文语言包
         cat >> .config <<EOF
         CONFIG_PACKAGE_luci=y
         CONFIG_PACKAGE_luci-base=y
@@ -108,9 +127,6 @@ jobs:
         CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
         EOF
         
-        # Compile DAED as a module (M)
-        echo "CONFIG_PACKAGE_luci-app-daed=m" >> .config
-        
         make defconfig
 
     - name: Download Packages
@@ -118,7 +134,7 @@ jobs:
         cd openwrt
         make download -j8 || make download -j1 V=s
 
-    - name: Compile Firmware & Packages
+    - name: Compile Firmware
       run: |
         cd openwrt
         make -j$(nproc) || make -j1 V=s
@@ -126,10 +142,7 @@ jobs:
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: WRT3200ACM-eBPF-DAED
+        name: OpenWrt-x64-PVE-eBPF
         path: |
-          openwrt/bin/targets/mvebu/cortexa9/*factory.img
-          openwrt/bin/targets/mvebu/cortexa9/*sysupgrade.bin
-          openwrt/bin/packages/**/daed*.ipk
-          openwrt/bin/packages/**/luci-app-daed*.ipk
+          openwrt/bin/targets/x86/64/*-generic-squashfs-combined*.img.gz
         retention-days: 7
